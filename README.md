@@ -22,6 +22,7 @@ The Flip DS work is documented under:
 
 ```text
 docs/flipds/DUAL_SCREEN_FRAME_EXPORT.md
+docs/flipds/BUILD_AND_DEPLOY.md
 docs/flipds/AGENT_HANDOFF.md
 ```
 

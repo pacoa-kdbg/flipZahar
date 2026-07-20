@@ -34,7 +34,10 @@ It is useful as a reference for service orchestration and physical orientation, 
 
 ## Current fork changes
 
-See `docs/flipds/DUAL_SCREEN_FRAME_EXPORT.md`.
+See:
+
+- `docs/flipds/DUAL_SCREEN_FRAME_EXPORT.md`
+- `docs/flipds/BUILD_AND_DEPLOY.md`
 
 Initial CLI plumbing added:
 
