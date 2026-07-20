@@ -14,6 +14,26 @@ It was created from the merging of PabloMK7's Citra fork and the Lime3DS project
 
 The goal of this project is to be the de-facto platform for future development.
 
+## flipZahar fork note
+
+This checkout is used by Paco as **flipZahar**, an experimental AYANEO Flip DS 1S fork focused on native dual-screen Steam/Game Mode support.
+
+The Flip DS work is documented under:
+
+```text
+docs/flipds/DUAL_SCREEN_FRAME_EXPORT.md
+docs/flipds/AGENT_HANDOFF.md
+```
+
+Initial fork-only CLI plumbing includes:
+
+```text
+--flipds-dual-screen
+--separate-windows
+--graphics-api software|opengl|vulkan
+--flipds-bottom-frame-export <path>
+```
+
 # Installation
 
 ### Windows

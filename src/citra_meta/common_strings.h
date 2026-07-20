@@ -27,6 +27,11 @@ constexpr char help_string[] =
 #endif
     "-v, --version               Output version information and exit\n"
     "-w, --windowed              Start in windowed mode\n"
+    "    --separate-windows       Start with top and bottom screens in separate windows\n"
+    "    --flipds-dual-screen     Alias for --separate-windows with Flip DS-safe defaults\n"
+    "    --graphics-api [api]     Override renderer: software, opengl, or vulkan\n"
+    "    --flipds-bottom-frame-export [path]\n"
+    "                              Experimental future bottom-frame export handoff path\n"
     "-x  [path]                  Decompress a Z3DS compressed ROM located at the given path\n"
     "                              (optionally provide '-o [path]' for output directory)";
 

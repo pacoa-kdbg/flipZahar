@@ -266,6 +266,9 @@ GMainWindow::GMainWindow(Core::System& system_)
     QStringList args = QApplication::arguments();
     QString game_path;
     std::optional<bool> fullscreen_override;
+    bool flipds_dual_screen_override = false;
+    QString flipds_bottom_frame_export_path;
+    std::optional<Settings::GraphicsAPI> graphics_api_override;
     for (int i = 1; i < args.size(); ++i) {
         // Preserves drag/drop functionality
         if (args.size() == 2 && !args[1].startsWith(QChar::fromLatin1('-'))) {
@@ -290,6 +293,44 @@ GMainWindow::GMainWindow(Core::System& system_)
         // Launch game in fullscreen mode
         if (args[i] == QStringLiteral("--fullscreen") || args[i] == QStringLiteral("-f")) {
             fullscreen_override = true;
+            continue;
+        }
+
+        // Flip DS / multi-window helper: force top and bottom screens into separate windows.
+        if (args[i] == QStringLiteral("--flipds-dual-screen") ||
+            args[i] == QStringLiteral("--separate-windows")) {
+            flipds_dual_screen_override = true;
+            continue;
+        }
+
+        // Flip DS experimental frame-export path. The renderer implementation is intentionally
+        // staged separately; this CLI plumbing makes Steam launchers and future renderer patches
+        // agree on a stable handoff path.
+        if (args[i] == QStringLiteral("--flipds-bottom-frame-export")) {
+            if (i >= args.size() - 1 || args[i + 1].startsWith(QChar::fromLatin1('-'))) {
+                continue;
+            }
+            flipds_bottom_frame_export_path = args[++i];
+            continue;
+        }
+
+        // Explicit renderer override for launcher profiles. This avoids fragile Qt INI patching
+        // when switching between the current OpenGL capture bridge and future Vulkan export builds.
+        if (args[i] == QStringLiteral("--graphics-api")) {
+            if (i >= args.size() - 1 || args[i + 1].startsWith(QChar::fromLatin1('-'))) {
+                continue;
+            }
+            const QString value = args[++i].toLower();
+            if (value == QStringLiteral("software")) {
+                graphics_api_override = Settings::GraphicsAPI::Software;
+            } else if (value == QStringLiteral("opengl") || value == QStringLiteral("gl")) {
+                graphics_api_override = Settings::GraphicsAPI::OpenGL;
+            } else if (value == QStringLiteral("vulkan") || value == QStringLiteral("vk")) {
+                graphics_api_override = Settings::GraphicsAPI::Vulkan;
+            } else {
+                std::cout << "Warning: unknown --graphics-api value '" << value.toStdString()
+                          << "'; expected software, opengl, or vulkan. Ignoring." << std::endl;
+            }
             continue;
         }
 
@@ -393,6 +434,26 @@ GMainWindow::GMainWindow(Core::System& system_)
             game_path = args[i];
             continue;
         }
+    }
+
+    if (graphics_api_override) {
+        Settings::values.graphics_api = *graphics_api_override;
+    }
+
+#ifndef ANDROID
+    if (flipds_dual_screen_override) {
+        Settings::values.layout_option = Settings::LayoutOption::SeparateWindows;
+        Settings::values.swap_screen = false;
+        Settings::values.upright_screen = false;
+        UISettings::values.single_window_mode = false;
+        if (!fullscreen_override) {
+            fullscreen_override = false;
+        }
+    }
+#endif
+
+    if (!flipds_bottom_frame_export_path.isEmpty()) {
+        qputenv("FLIPZAHAR_BOTTOM_FRAME_EXPORT", flipds_bottom_frame_export_path.toUtf8());
     }
 
 #ifdef __unix__
