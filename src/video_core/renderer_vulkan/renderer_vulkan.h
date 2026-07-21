@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <memory>
 #include "common/common_types.h"
 #include "common/math_util.h"
 #include "video_core/renderer_base.h"
@@ -35,6 +36,7 @@ struct FramebufferLayout;
 
 namespace VideoCore {
 class GPU;
+class FlipZaharFrameExporter;
 }
 
 namespace Vulkan {
@@ -95,6 +97,7 @@ private:
     void RenderScreenshot();
     void RenderScreenshotWithStagingCopy();
     bool TryRenderScreenshotWithHostMemory();
+    void ExportSecondaryFrame(Frame* frame, vk::Format surface_format);
     void PrepareDraw(Frame* frame, const Layout::FramebufferLayout& layout);
     void RenderToWindow(PresentWindow& window, const Layout::FramebufferLayout& layout,
                         bool flipped);
@@ -134,6 +137,7 @@ private:
     DescriptorUpdateQueue update_queue;
     RasterizerVulkan rasterizer;
     std::unique_ptr<PresentWindow> secondary_present_window_ptr;
+    std::unique_ptr<VideoCore::FlipZaharFrameExporter> flipzahar_bottom_frame_exporter;
     DescriptorHeap present_heap;
     vk::UniquePipelineLayout present_pipeline_layout;
     std::array<vk::Pipeline, PRESENT_PIPELINES> present_pipelines;

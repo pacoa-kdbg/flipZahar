@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <cstdlib>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/memory_detect.h"
@@ -9,6 +10,7 @@
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/frontend/emu_window.h"
+#include "video_core/flipzahar_frame_exporter.h"
 #include "video_core/gpu.h"
 #include "video_core/pica/pica_core.h"
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
@@ -126,6 +128,13 @@ RendererVulkan::RendererVulkan(Core::System& system, Pica::PicaCore& pica_,
                                          update_queue,
                                          main_present_window.ImageCount()},
       present_heap{instance, scheduler.GetMasterSemaphore(), PRESENT_BINDINGS, 32} {
+    if (const char* export_path = std::getenv("FLIPZAHAR_BOTTOM_FRAME_EXPORT");
+        export_path && export_path[0] != '\0') {
+        flipzahar_bottom_frame_exporter =
+            std::make_unique<VideoCore::FlipZaharFrameExporter>(export_path);
+        LOG_INFO(Render_Vulkan, "FlipZahar bottom-frame export enabled at {}", export_path);
+    }
+
     CompileShaders();
     BuildLayouts();
     BuildPipelines();
@@ -236,8 +245,10 @@ void RendererVulkan::PrepareDraw(Frame* frame, const Layout::FramebufferLayout& 
 
 void RendererVulkan::RenderToWindow(PresentWindow& window, const Layout::FramebufferLayout& layout,
                                     bool flipped) {
+    const bool exporting_secondary = isSecondaryWindow && flipzahar_bottom_frame_exporter &&
+                                     flipzahar_bottom_frame_exporter->IsEnabled();
     if (!Settings::values.use_skip_duplicate_frames.GetValue() ||
-        Core::PerfStats::game_frames_updated) {
+        Core::PerfStats::game_frames_updated || exporting_secondary) {
         Frame* frame = window.GetRenderFrame();
 
         if (layout.width != frame->width || layout.height != frame->height) {
@@ -252,6 +263,10 @@ void RendererVulkan::RenderToWindow(PresentWindow& window, const Layout::Framebu
         clear_color.float32[3] = 1.0f;
 
         DrawScreens(frame, layout, flipped);
+        if (isSecondaryWindow && flipzahar_bottom_frame_exporter &&
+            flipzahar_bottom_frame_exporter->IsEnabled()) {
+            ExportSecondaryFrame(frame, window.GetSurfaceFormat());
+        }
         scheduler.Flush(frame->render_ready);
         window.Present(frame);
         if ((secondaryWindowEnabled && isSecondaryWindow) || (!secondaryWindowEnabled)) {
@@ -1189,6 +1204,120 @@ void RendererVulkan::RenderScreenshot() {
     }
 
     settings.screenshot_complete_callback(false);
+}
+
+void RendererVulkan::ExportSecondaryFrame(Frame* frame, vk::Format surface_format) {
+    const u32 width = frame->width;
+    const u32 height = frame->height;
+    const u32 stride = width * 4;
+
+    const VideoCore::FlipZaharFrameFormat frame_format =
+        surface_format == vk::Format::eR8G8B8A8Unorm ? VideoCore::FlipZaharFrameFormat::RGBA8
+                                                     : VideoCore::FlipZaharFrameFormat::BGRA8;
+
+    const vk::BufferCreateInfo staging_buffer_info = {
+        .size = static_cast<vk::DeviceSize>(stride) * height,
+        .usage = vk::BufferUsageFlagBits::eTransferDst,
+    };
+
+    const VmaAllocationCreateInfo alloc_create_info = {
+        .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                 VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+        .requiredFlags = 0,
+        .preferredFlags = 0,
+        .pool = VK_NULL_HANDLE,
+        .pUserData = nullptr,
+    };
+
+    VkBuffer unsafe_buffer{};
+    VmaAllocation allocation{};
+    VmaAllocationInfo alloc_info;
+    VkBufferCreateInfo unsafe_buffer_info = static_cast<VkBufferCreateInfo>(staging_buffer_info);
+
+    VkResult result = vmaCreateBuffer(instance.GetAllocator(), &unsafe_buffer_info,
+                                      &alloc_create_info, &unsafe_buffer, &allocation, &alloc_info);
+    if (result != VK_SUCCESS) [[unlikely]] {
+        LOG_ERROR(Render_Vulkan, "FlipZahar frame export failed staging allocation: {}", result);
+        return;
+    }
+
+    vk::Buffer staging_buffer{unsafe_buffer};
+
+    scheduler.Record(
+        [width, height, source_image = frame->image, staging_buffer](vk::CommandBuffer cmdbuf) {
+            const vk::ImageMemoryBarrier read_barrier = {
+                .srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
+                .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+                .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+                .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = source_image,
+                .subresourceRange{
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .baseMipLevel = 0,
+                    .levelCount = VK_REMAINING_MIP_LEVELS,
+                    .baseArrayLayer = 0,
+                    .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                },
+            };
+            const vk::ImageMemoryBarrier write_barrier = {
+                .srcAccessMask = vk::AccessFlagBits::eTransferRead,
+                .dstAccessMask = vk::AccessFlagBits::eMemoryWrite,
+                .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+                .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = source_image,
+                .subresourceRange{
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .baseMipLevel = 0,
+                    .levelCount = VK_REMAINING_MIP_LEVELS,
+                    .baseArrayLayer = 0,
+                    .layerCount = VK_REMAINING_ARRAY_LAYERS,
+                },
+            };
+            static constexpr vk::MemoryBarrier memory_write_barrier = {
+                .srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
+                .dstAccessMask = vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite,
+            };
+
+            const vk::BufferImageCopy image_copy = {
+                .bufferOffset = 0,
+                .bufferRowLength = 0,
+                .bufferImageHeight = 0,
+                .imageSubresource =
+                    {
+                        .aspectMask = vk::ImageAspectFlagBits::eColor,
+                        .mipLevel = 0,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1,
+                    },
+                .imageOffset = {0, 0, 0},
+                .imageExtent = {width, height, 1},
+            };
+
+            cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                                   vk::PipelineStageFlagBits::eTransfer,
+                                   vk::DependencyFlagBits::eByRegion, {}, {}, read_barrier);
+            cmdbuf.copyImageToBuffer(source_image, vk::ImageLayout::eTransferSrcOptimal,
+                                     staging_buffer, image_copy);
+            cmdbuf.pipelineBarrier(
+                vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eAllCommands,
+                vk::DependencyFlagBits::eByRegion, memory_write_barrier, {}, write_barrier);
+        });
+
+    // Correctness-first MVP: block the secondary-window render path until the readback is complete.
+    // This proves the DP-1 handoff; follow-up work should replace this with ringed staging buffers.
+    scheduler.Finish();
+
+    const auto* pixels = static_cast<const u8*>(alloc_info.pMappedData);
+    flipzahar_bottom_frame_exporter->ExportFrame(
+        width, height, stride, frame_format,
+        std::span<const u8>{pixels, static_cast<std::size_t>(staging_buffer_info.size)});
+
+    vmaDestroyBuffer(instance.GetAllocator(), staging_buffer, allocation);
 }
 
 void RendererVulkan::RenderScreenshotWithStagingCopy() {
