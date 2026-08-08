@@ -102,6 +102,8 @@ unique payload byte values: 206
 
 The fork makes Azahar the **producer** in a gamescope DRM-lease pipeline. It does not create a DRM lease or submit scanout buffers itself.
 
+The gamescope implementation used for this work is the [`mmogr/gamescope` DRM-lease fork](https://github.com/mmogr/gamescope), which provides the leased-connector path consumed by the external renderer.
+
 1. `--flipds-dual-screen` (or `--separate-windows`) selects Azahar's existing Separate Windows layout and applies launch-local defaults: no screen swap/upright transform and no single-window mode. The main/top screen remains in the primary Azahar window; the bottom screen is rendered through the secondary window.
 2. `--graphics-api software|opengl|vulkan` makes renderer selection launch-local, avoiding edits to Qt configuration when moving between prototype paths.
 3. `--flipds-bottom-frame-export <path>` passes the caller-supplied path to the renderer as `FLIPZAHAR_BOTTOM_FRAME_EXPORT`.
