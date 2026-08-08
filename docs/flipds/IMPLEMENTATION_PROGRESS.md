@@ -95,3 +95,40 @@ unique payload byte values: 206
 - The consumer side still needs update from PPM polling to `FZFRAME` parsing.
 - The exported frame is the secondary window size (`1920x1080` in the gamescope/Xwayland session), with the 3DS bottom menu scaled inside it. The lease consumer should crop/scale/rotate for DP-1.
 - Do not test real games/saves until the homebrew export path is integrated into the lease renderer and verified visually on DP-1.
+
+## DRM-lease integration summary for implementers
+
+### What this fork changes
+
+The fork makes Azahar the **producer** in a gamescope DRM-lease pipeline. It does not create a DRM lease or submit scanout buffers itself.
+
+1. `--flipds-dual-screen` (or `--separate-windows`) selects Azahar's existing Separate Windows layout and applies launch-local defaults: no screen swap/upright transform and no single-window mode. The main/top screen remains in the primary Azahar window; the bottom screen is rendered through the secondary window.
+2. `--graphics-api software|opengl|vulkan` makes renderer selection launch-local, avoiding edits to Qt configuration when moving between prototype paths.
+3. `--flipds-bottom-frame-export <path>` passes the caller-supplied path to the renderer as `FLIPZAHAR_BOTTOM_FRAME_EXPORT`.
+4. On the Vulkan secondary-window render path, the renderer copies the completed `Frame::image` into a host-visible staging buffer and atomically writes an `FZFRAME` payload to the requested path.
+
+This replaces the earlier OpenGL-only bridge:
+
+```text
+Azahar bottom X11 window -> screenshot/capture polling -> PPM -> lease renderer -> leased panel
+```
+
+That bridge proved lease ownership and physical routing, but cannot reliably capture Vulkan/gamescope WSI output (black captures). The intended path is:
+
+```text
+Azahar Vulkan secondary output -> FZFRAME -> lease consumer -> DRM lease scanout
+```
+
+### Consumer contract and remaining work
+
+The lease consumer must parse the `FZFRAME` header and payload, then apply the target device's crop, scale, rotation, connector/mode selection, and DRM-lease scanout. It should not assume the exported frame has the native 3DS bottom-screen dimensions: it is the Azahar secondary window's rendered size.
+
+The current MVP intentionally blocks on GPU completion and writes a file every exported frame. Replace it with persistent/ringed staging buffers and a more efficient handoff (for example shared memory or dma-buf) only after end-to-end visual correctness is established.
+
+Bottom-touch forwarding into Azahar is not implemented. It must be added independently of gamescope input handling and mapped for the target device.
+
+### Portability boundary
+
+The source implementation contains no hardcoded connector, DRM lease socket, touch device, display mode, rotation, or output path. `--flipds-*` is a historical name, not device detection. It can export Vulkan secondary frames on another compatible Linux device by selecting an output path at launch.
+
+The existing Flip DS deployment documentation is device-specific: its gamescope lease configuration assumes `eDP-1`/`DP-1`, the lower-panel rotation and mode, a particular lease socket, and Goodix touch hardware. Other devices require a matching lease-consumer configuration; they are not plug-and-play from this repository alone.
